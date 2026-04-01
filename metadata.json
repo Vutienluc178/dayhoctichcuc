@@ -1,0 +1,5 @@
+{
+  "name": "EduGame Creator",
+  "description": "Ứng dụng tạo trò chơi sư phạm (Domino, Flashcard, Tarsia, Khăn trải bàn) hỗ trợ MathJax và xuất file ảnh/in ấn.",
+  "requestFramePermissions": []
+}
