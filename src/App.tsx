@@ -29,7 +29,8 @@ import {
   Maximize2,
   Minimize2,
   Eraser,
-  X
+  X,
+  Pen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -38,6 +39,7 @@ import 'katex/dist/katex.min.css';
 import { InlineMath } from 'react-katex';
 import confetti from 'canvas-confetti';
 import { TARSIA_TRIANGLE_16, TARSIA_RHOMBUS_18, TARSIA_HEXAGON_24 } from './TarsiaTemplates';
+import { DrawingOverlay } from './components/DrawingOverlay';
 
 // Types
 type GameType = 'domino' | 'matching' | 'triangle' | 'tablecloth';
@@ -172,7 +174,7 @@ export default function App() {
   const [showSymbols, setShowSymbols] = useState<boolean>(true);
   const [currentPresIdx, setCurrentPresIdx] = useState(0);
   const [showPresAnswer, setShowPresAnswer] = useState(false);
-  const [isBlackboardFullscreen, setIsBlackboardFullscreen] = useState(false);
+  const [isDrawingOverlayOpen, setIsDrawingOverlayOpen] = useState(false);
   const [showPresWebsite, setShowPresWebsite] = useState(false);
   const [isPresWebsiteFullscreen, setIsPresWebsiteFullscreen] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -193,17 +195,11 @@ export default function App() {
   const [luckyMessage, setLuckyMessage] = useState('');
   
   // Resizable states for presentation mode
-  const [blackboardHeight, setBlackboardHeight] = useState(40); // percentage
   const [websiteWidth, setWebsiteWidth] = useState(50); // percentage
-  const [isResizingBlackboard, setIsResizingBlackboard] = useState(false);
   const [isResizingWebsite, setIsResizingWebsite] = useState(false);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (isResizingBlackboard) {
-        const height = ((window.innerHeight - e.clientY) / window.innerHeight) * 100;
-        setBlackboardHeight(Math.min(Math.max(height, 5), 95));
-      }
       if (isResizingWebsite) {
         const width = ((window.innerWidth - e.clientX) / window.innerWidth) * 100;
         setWebsiteWidth(Math.min(Math.max(width, 5), 95));
@@ -211,11 +207,10 @@ export default function App() {
     };
 
     const handleMouseUp = () => {
-      setIsResizingBlackboard(false);
       setIsResizingWebsite(false);
     };
 
-    if (isResizingBlackboard || isResizingWebsite) {
+    if (isResizingWebsite) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     }
@@ -223,7 +218,7 @@ export default function App() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizingBlackboard, isResizingWebsite]);
+  }, [isResizingWebsite]);
 
   useEffect(() => {
     const handleFullScreenChange = () => {
@@ -268,12 +263,14 @@ export default function App() {
     if (!sheetId) return;
     setIsFetchingSheet(true);
     try {
-      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+      // Use gviz/tq endpoint which supports CORS and returns CSV
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch sheet');
-      const arrayBuffer = await response.arrayBuffer();
       
-      const wb = XLSX.read(arrayBuffer, { type: 'array' });
+      const csvText = await response.text();
+      
+      const wb = XLSX.read(csvText, { type: 'string' });
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const excelData = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
@@ -291,7 +288,7 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error fetching Google Sheet:', error);
-      alert('Không thể tải dữ liệu từ Google Sheets. Hãy đảm bảo Sheet đã được "Chia sẻ với bất kỳ ai có liên kết" hoặc "Xuất bản lên web".');
+      alert('Không thể tải dữ liệu từ Google Sheets. Hãy đảm bảo Sheet đã được "Chia sẻ với bất kỳ ai có liên kết".');
     } finally {
       setIsFetchingSheet(false);
     }
@@ -524,7 +521,7 @@ export default function App() {
       } else if (e.key === 'Enter' || e.key === ' ') {
         setShowPresAnswer(prev => !prev);
       } else if (e.key.toLowerCase() === 'f') {
-        setIsBlackboardFullscreen(prev => !prev);
+        setIsDrawingOverlayOpen(prev => !prev);
       } else if (e.key.toLowerCase() === 'w') {
         setShowPresWebsite(prev => !prev);
       } else if (e.key.toLowerCase() === 'r') {
@@ -1318,6 +1315,13 @@ export default function App() {
                   {isFullScreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
                 </button>
                 <button 
+                  onClick={() => setIsDrawingOverlayOpen(!isDrawingOverlayOpen)}
+                  className={`p-2 rounded-full transition-all ${isDrawingOverlayOpen ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/50 hover:text-white hover:bg-white/20'}`}
+                  title="Bật/tắt bảng vẽ (F)"
+                >
+                  <Pen size={20} />
+                </button>
+                <button 
                   onClick={() => setShowPresWebsite(!showPresWebsite)}
                   className={`p-2 rounded-full transition-all ${showPresWebsite ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/50 hover:text-white hover:bg-white/20'}`}
                   title="Bật/tắt trang web (W)"
@@ -1342,13 +1346,11 @@ export default function App() {
                   {data.length > 0 && (data[0].q || data[0].a) ? (
                     <>
                       {/* Top: Question & Answer */}
-                      {!isBlackboardFullscreen && (
-                        <div 
-                          className="bg-black p-4 md:p-6 flex flex-col items-center justify-center relative overflow-hidden"
-                          style={{ flex: `1 1 ${100 - blackboardHeight}%` }}
-                        >
+                      <div 
+                        className="bg-black p-4 md:p-6 flex flex-col items-center justify-start relative overflow-hidden flex-1 pt-20"
+                      >
 
-                          <div className="absolute top-4 left-6 opacity-30">
+                        <div className="absolute top-4 left-6 opacity-30">
                             <div className="text-white/50 font-black text-xs uppercase tracking-widest">
                               {isPuzzleMode && currentPresIdx === data.length ? 'Kết quả cuối cùng' : `Câu hỏi ${currentPresIdx + 1} / ${data.filter(d => d.q || d.a).length}`}
                             </div>
@@ -1361,7 +1363,7 @@ export default function App() {
                                 initial={{ opacity: 0, y: 100, scale: 0.5 }}
                                 animate={{ opacity: 1, y: 0, scale: 1 }}
                                 exit={{ opacity: 0, y: 100, scale: 0.5 }}
-                                className="absolute bottom-12 left-1/2 -translate-x-1/2 z-[100] pointer-events-none"
+                                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] pointer-events-none"
                               >
                                 <div className="relative">
                                   {/* Glow Effect */}
@@ -1379,22 +1381,22 @@ export default function App() {
                                   
                                   {!isSpinning && (
                                     <motion.div 
-                                      initial={{ opacity: 0, y: 20 }}
+                                      initial={{ opacity: 0, y: -20 }}
                                       animate={{ opacity: 1, y: 0 }}
-                                      className="absolute -top-24 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 whitespace-nowrap"
+                                      className="absolute -bottom-40 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 whitespace-nowrap"
                                     >
-                                      <motion.div
-                                        initial={{ scale: 0.8 }}
-                                        animate={{ scale: 1 }}
-                                        className="bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-2xl shadow-2xl"
-                                      >
-                                        <p className="text-yellow-400 font-bold text-lg italic drop-shadow-md">
-                                          "{luckyMessage}"
-                                        </p>
-                                      </motion.div>
                                       <span className="px-6 py-2 bg-yellow-500 text-black text-sm font-black uppercase tracking-[0.3em] rounded-full shadow-xl">
                                         Con số may mắn
                                       </span>
+                                      <motion.div
+                                        initial={{ scale: 0.8 }}
+                                        animate={{ scale: 1 }}
+                                        className="bg-white/10 backdrop-blur-md border border-white/20 px-8 py-4 rounded-3xl shadow-2xl"
+                                      >
+                                        <p className="text-yellow-400 font-black text-4xl md:text-6xl italic drop-shadow-md">
+                                          "{luckyMessage}"
+                                        </p>
+                                      </motion.div>
                                     </motion.div>
                                   )}
                                 </div>
@@ -1462,7 +1464,7 @@ export default function App() {
                           </div>
 
                           {/* Navigation Controls - Subtle */}
-                          <div className="absolute bottom-4 right-6 flex gap-2 opacity-0 hover:opacity-100 transition-opacity">
+                          <div className="absolute bottom-4 right-6 flex gap-2 opacity-0 hover:opacity-100 transition-opacity z-50">
                             <button 
                               disabled={currentPresIdx === 0}
                               onClick={() => { setCurrentPresIdx(prev => prev - 1); setShowPresAnswer(false); }}
@@ -1478,47 +1480,12 @@ export default function App() {
                               <ChevronRight size={20} />
                             </button>
                           </div>
-                        </div>
-                      )}
-
-                      {/* Bottom: Blackboard */}
-                      {!(isPuzzleMode && currentPresIdx === data.length) && (
-                        <div 
-                          className="bg-black border-t border-white/10 relative overflow-hidden group transition-all duration-500"
-                          style={{ flex: isBlackboardFullscreen ? '1 1 100%' : `0 0 ${blackboardHeight}%` }}
-                        >
-                          {/* Resizer Handle */}
-                          {!isBlackboardFullscreen && (
-                            <div 
-                              className="absolute top-0 left-0 right-0 h-1 cursor-ns-resize bg-transparent hover:bg-indigo-500 z-50 transition-colors"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                setIsResizingBlackboard(true);
-                              }}
-                            />
+                          
+                          {/* Drawing Overlay */}
+                          {isDrawingOverlayOpen && (
+                            <DrawingOverlay onClose={() => setIsDrawingOverlayOpen(false)} />
                           )}
-                          <div className="absolute inset-0 opacity-5 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/chalkboard.png')]"></div>
-                          <div className="relative z-10 flex flex-col h-full">
-                            <div className="flex items-center justify-between px-4 py-2 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <div className="flex items-center gap-2 text-white/30">
-                                <span className="text-[9px] font-black uppercase tracking-[0.3em]">Bảng viết tay (F: Toàn màn hình)</span>
-                              </div>
-                              <div className="flex gap-2">
-                                <button 
-                                  onClick={() => setIsBlackboardFullscreen(!isBlackboardFullscreen)}
-                                  className="p-1.5 text-white/30 hover:text-white hover:bg-white/10 rounded-lg transition-all"
-                                  title={isBlackboardFullscreen ? "Thu nhỏ" : "Toàn màn hình"}
-                                >
-                                  {isBlackboardFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                                </button>
-                              </div>
-                            </div>
-                            <div className="flex-1 relative">
-                              <Blackboard />
-                            </div>
-                          </div>
                         </div>
-                      )}
                     </>
                   ) : (
                     <div className="flex-1 bg-slate-900 rounded-3xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-600">
@@ -1908,135 +1875,6 @@ const MathText = ({ text }: { text: string }) => {
 };
 
 /**
- * Blackboard Component for drawing
- */
-const Blackboard = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [color, setColor] = useState('#ffffff');
-  const [lineWidth, setLineWidth] = useState(3);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Resize canvas to fit container
-    const resize = () => {
-      window.requestAnimationFrame(() => {
-        const parent = canvas.parentElement;
-        if (parent && canvas) {
-          // Save current content
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = canvas.width;
-          tempCanvas.height = canvas.height;
-          const tempCtx = tempCanvas.getContext('2d');
-          if (tempCtx) tempCtx.drawImage(canvas, 0, 0);
-
-          canvas.width = parent.clientWidth;
-          canvas.height = parent.clientHeight;
-
-          // Restore content
-          const currentCtx = canvas.getContext('2d');
-          if (currentCtx) {
-            currentCtx.drawImage(tempCanvas, 0, 0);
-            currentCtx.lineCap = 'round';
-            currentCtx.lineJoin = 'round';
-          }
-        }
-      });
-    };
-
-    const resizeObserver = new ResizeObserver(resize);
-    if (canvas.parentElement) resizeObserver.observe(canvas.parentElement);
-
-    resize();
-    return () => resizeObserver.disconnect();
-  }, []);
-
-  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
-    setIsDrawing(true);
-    draw(e);
-  };
-
-  const stopDrawing = () => {
-    setIsDrawing(false);
-    const ctx = canvasRef.current?.getContext('2d');
-    if (ctx) ctx.beginPath();
-  };
-
-  const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    let x, y;
-
-    if ('touches' in e) {
-      x = e.touches[0].clientX - rect.left;
-      y = e.touches[0].clientY - rect.top;
-    } else {
-      x = e.clientX - rect.left;
-      y = e.clientY - rect.top;
-    }
-
-    ctx.lineWidth = lineWidth;
-    ctx.strokeStyle = color;
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-  };
-
-  const clear = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-  };
-
-  return (
-    <div className="w-full h-full relative cursor-crosshair">
-      <canvas
-        ref={canvasRef}
-        onMouseDown={startDrawing}
-        onMouseUp={stopDrawing}
-        onMouseMove={draw}
-        onMouseOut={stopDrawing}
-        onTouchStart={startDrawing}
-        onTouchEnd={stopDrawing}
-        onTouchMove={draw}
-        className="w-full h-full block"
-      />
-      <div className="absolute bottom-4 right-4 flex gap-2 bg-slate-800/80 backdrop-blur-sm p-2 rounded-xl border border-slate-700 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity">
-        <div className="flex gap-1 border-r border-slate-700 pr-2 mr-1">
-          {['#ffffff', '#f87171', '#4ade80', '#60a5fa', '#fbbf24'].map(c => (
-            <button
-              key={c}
-              onClick={() => setColor(c)}
-              className={`w-6 h-6 rounded-full border-2 ${color === c ? 'border-white scale-110' : 'border-transparent'}`}
-              style={{ backgroundColor: c }}
-            />
-          ))}
-        </div>
-        <button 
-          onClick={clear}
-          className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"
-          title="Xoá bảng"
-        >
-          <Eraser size={18} />
-        </button>
-      </div>
-    </div>
-  );
-};
-
-/**
  * Domino Component
  */
 const DominoGame = ({ data, mode, cutLineClass, theme = 'classic', bgImage, isPuzzleMode, showSymbols = false }: { data: any[], mode: string, cutLineClass: string, theme?: DominoTheme, bgImage?: string | null, isPuzzleMode?: boolean, showSymbols?: boolean }) => {
@@ -2218,7 +2056,7 @@ function GameRenderer({ type, data, mode, bgImage, theme, triangleFontSize, isPu
  * Worksheet Renderer Component
  */
 const WorksheetRenderer = ({ data }: { data: GameData[] }) => {
-  const questionsPerPage = 24; // 12 rows, 2 columns -> very economical
+  const questionsPerPage = 20; // Reduced to 20 to make room for reflection questions
   const pages = [];
   for (let i = 0; i < data.length; i += questionsPerPage) {
     pages.push(data.slice(i, i + questionsPerPage));
@@ -2227,7 +2065,7 @@ const WorksheetRenderer = ({ data }: { data: GameData[] }) => {
   return (
     <div className="bg-slate-100 space-y-8 print:space-y-0 print:bg-white">
       {pages.map((pageQuestions, pageIndex) => (
-        <div key={pageIndex} className="game-page bg-white p-8 min-h-[297mm] text-black font-serif shadow-lg print:shadow-none print:p-6 relative box-border">
+        <div key={pageIndex} className="game-page bg-white p-8 min-h-[297mm] text-black font-serif shadow-lg print:shadow-none print:p-6 relative box-border flex flex-col">
           {/* Header only on first page */}
           {pageIndex === 0 && (
             <div className="mb-4">
@@ -2241,7 +2079,7 @@ const WorksheetRenderer = ({ data }: { data: GameData[] }) => {
                   <div className="text-[11pt] italic">Môn: .......................................</div>
                 </div>
               </div>
-              <div className="flex flex-col gap-2 text-[11pt] mb-3 px-2">
+              <div className="flex flex-col gap-3 text-[11pt] mb-3 px-2">
                 <div className="flex w-full items-end">
                   <span className="font-bold whitespace-nowrap mr-2">Họ và tên học sinh:</span>
                   <span className="flex-1 border-b border-dotted border-black"></span>
@@ -2252,8 +2090,14 @@ const WorksheetRenderer = ({ data }: { data: GameData[] }) => {
                   <span className="font-bold whitespace-nowrap mr-2">Chủ đề bài học:</span>
                   <span className="flex-1 border-b border-dotted border-black"></span>
                 </div>
+                <div className="flex w-full items-end mt-1">
+                  <span className="font-bold whitespace-nowrap mr-2 text-red-600 print:text-black">Điểm:</span>
+                  <span className="w-24 border-b border-dotted border-black"></span>
+                  <span className="font-bold whitespace-nowrap mx-2 text-red-600 print:text-black">Nhận xét của giáo viên:</span>
+                  <span className="flex-1 border-b border-dotted border-black"></span>
+                </div>
               </div>
-              <div className="border-b-[1.5px] border-black w-full mt-2"></div>
+              <div className="border-b-[1.5px] border-black w-full mt-3"></div>
             </div>
           )}
 
@@ -2264,7 +2108,7 @@ const WorksheetRenderer = ({ data }: { data: GameData[] }) => {
             </div>
           )}
           
-          <div className="grid grid-cols-2 gap-x-8 gap-y-5 mt-4">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-5 mt-4 flex-1 content-start">
             {pageQuestions.map((item, index) => (
               <div key={index} className="flex flex-col break-inside-avoid">
                 <div className="flex gap-1.5 items-start">
@@ -2282,15 +2126,24 @@ const WorksheetRenderer = ({ data }: { data: GameData[] }) => {
           
           {/* Footer only on last page */}
           {pageIndex === pages.length - 1 && (
-            <div className="mt-8 flex justify-between items-start pt-4 px-8">
-              <div className="text-center">
-                <div className="text-[11pt] font-bold uppercase">Giáo viên ra đề</div>
-                <div className="text-[11pt] italic mt-16">(Ký và ghi rõ họ tên)</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[11pt] italic mb-1">Ngày ...... tháng ...... năm 202...</div>
-                <div className="text-[11pt] font-bold uppercase">Tổ trưởng chuyên môn</div>
-                <div className="text-[11pt] italic mt-12">(Ký và ghi rõ họ tên)</div>
+            <div className="mt-8 pt-4 border-t-2 border-black">
+              <h3 className="font-bold text-[12pt] mb-3 uppercase">Phần tự đánh giá & Củng cố kiến thức:</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col">
+                  <span className="font-bold text-[11pt] italic mb-1">1. Điều quan trọng nhất em học được qua phiếu bài tập này là gì?</span>
+                  <div className="border-b border-dotted border-black w-full h-6"></div>
+                  <div className="border-b border-dotted border-black w-full h-6"></div>
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-bold text-[11pt] italic mb-1">2. Em còn thắc mắc hay chưa hiểu rõ phần kiến thức nào?</span>
+                  <div className="border-b border-dotted border-black w-full h-6"></div>
+                  <div className="border-b border-dotted border-black w-full h-6"></div>
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-bold text-[11pt] italic mb-1">3. Em sẽ ứng dụng kiến thức này vào thực tế như thế nào?</span>
+                  <div className="border-b border-dotted border-black w-full h-6"></div>
+                  <div className="border-b border-dotted border-black w-full h-6"></div>
+                </div>
               </div>
             </div>
           )}
@@ -2727,100 +2580,78 @@ const TableclothGame = ({ data, mode }: { data: GameData[], mode: string }) => {
     groups.push(data.slice(i, i + 6));
   }
 
+  const hexPositions = [
+    { left: '50%', top: 'calc(50% - 69.3mm)', rotate: '180deg' }, // Top
+    { left: 'calc(50% + 60mm)', top: 'calc(50% - 34.65mm)', rotate: '-120deg' }, // Top-Right
+    { left: 'calc(50% + 60mm)', top: 'calc(50% + 34.65mm)', rotate: '-60deg' }, // Bottom-Right
+    { left: '50%', top: 'calc(50% + 69.3mm)', rotate: '0deg' }, // Bottom
+    { left: 'calc(50% - 60mm)', top: 'calc(50% + 34.65mm)', rotate: '60deg' }, // Bottom-Left
+    { left: 'calc(50% - 60mm)', top: 'calc(50% - 34.65mm)', rotate: '120deg' }, // Top-Left
+  ];
+
   return (
     <div className="space-y-10">
       {groups.map((groupData, groupIndex) => (
-        <div key={groupIndex} className="game-page print:break-after-page w-[297mm] h-[210mm] bg-white border border-slate-200 relative overflow-hidden mx-auto shadow-xl print:shadow-none">
+        <div key={groupIndex} className="game-page print:break-after-page w-[297mm] h-[210mm] bg-white relative overflow-hidden mx-auto shadow-xl print:shadow-none">
           {/* Header Info */}
-          <div className="absolute top-2 left-0 w-full text-center opacity-20 pointer-events-none">
-            <div className="text-[10px] font-black uppercase tracking-widest">Kỹ thuật Khăn trải bàn - Nhóm {groupIndex + 1}</div>
+          <div className="absolute top-4 left-4 text-left opacity-40 pointer-events-none">
+            <div className="text-xs font-black uppercase tracking-widest">Kỹ thuật Khăn trải bàn</div>
+            <div className="text-[10px] font-bold">Nhóm {groupIndex + 1}</div>
           </div>
 
           {/* Central Area: Group Consensus */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[100mm] h-[70mm] border-2 border-slate-300 rounded-2xl flex flex-col p-4 bg-slate-50/50 z-10">
-            <div className="text-center mb-2">
-              <h3 className="text-xs font-black uppercase tracking-tighter text-slate-400">Ý kiến chung của nhóm</h3>
-              <div className="h-[1px] bg-slate-200 w-1/2 mx-auto mt-1" />
-            </div>
-            <div className="flex-1 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-slate-300 italic text-[10px] text-center px-4">
-              Ghi lại kết quả thảo luận thống nhất của cả nhóm tại đây...
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[80mm] h-[69.3mm] z-10">
+            <svg className="absolute inset-0 w-full h-full drop-shadow-sm" viewBox="0 0 82 71.3">
+              <polygon points="21,1 61,1 81,35.65 61,70.3 21,70.3 1,35.65" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="2" strokeDasharray="4 4" />
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="relative z-10 flex flex-col items-center justify-center w-[50mm] h-[50mm] text-center">
+                <h3 className="text-[11px] font-black uppercase tracking-tighter text-slate-500 mb-1">Ý kiến chung</h3>
+                <div className="text-[9px] text-slate-400 italic">Ghi lại kết quả thống nhất tại đây</div>
+              </div>
             </div>
           </div>
 
           {/* 6 Individual Sections - Positioned around the central area */}
-          
-          {/* Top Edge (2 students) */}
-          <TableclothSection 
-            data={groupData[0]} 
-            index={1} 
-            className="absolute top-0 left-[50mm] w-[95mm] h-[65mm] rotate-180"
-          />
-          <TableclothSection 
-            data={groupData[1]} 
-            index={2} 
-            className="absolute top-0 left-[150mm] w-[95mm] h-[65mm] rotate-180"
-          />
-
-          {/* Bottom Edge (2 students) */}
-          <TableclothSection 
-            data={groupData[2]} 
-            index={3} 
-            className="absolute bottom-0 left-[50mm] w-[95mm] h-[65mm]"
-          />
-          <TableclothSection 
-            data={groupData[3]} 
-            index={4} 
-            className="absolute bottom-0 left-[150mm] w-[95mm] h-[65mm]"
-          />
-
-          {/* Left Edge (1 student) */}
-          <TableclothSection 
-            data={groupData[4]} 
-            index={5} 
-            className="absolute top-1/2 left-[-15mm] w-[95mm] h-[65mm] -translate-y-1/2 rotate-90"
-          />
-
-          {/* Right Edge (1 student) */}
-          <TableclothSection 
-            data={groupData[5]} 
-            index={6} 
-            className="absolute top-1/2 right-[-15mm] w-[95mm] h-[65mm] -translate-y-1/2 -rotate-90"
-          />
+          {hexPositions.map((pos, idx) => (
+            <TableclothSection 
+              key={idx}
+              data={groupData[idx]} 
+              index={idx + 1} 
+              style={{
+                left: pos.left,
+                top: pos.top,
+                transform: `translate(-50%, -50%) rotate(${pos.rotate})`
+              }}
+            />
+          ))}
         </div>
       ))}
     </div>
   );
 };
 
-const TableclothSection = ({ data, index, className }: { data?: GameData, index: number, className: string }) => {
+const TableclothSection: React.FC<{ data?: GameData, index: number, style: React.CSSProperties }> = ({ data, index, style }) => {
   return (
-    <div className={`border border-slate-200 p-3 flex flex-col bg-white ${className}`}>
-      <div className="flex justify-between items-center mb-1 border-b border-slate-100 pb-1">
-        <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Học sinh {index}</span>
-        <span className="text-[7px] text-slate-300 font-bold uppercase">Khăn trải bàn</span>
-      </div>
-      
-      <div className="flex-1 flex flex-col gap-1.5 overflow-hidden">
-        <div className="bg-slate-50 p-1.5 rounded-lg border border-slate-100 min-h-[1.5rem] flex items-center justify-center">
-          <div className="text-[9px] font-bold text-slate-700 leading-tight text-center">
-            <MathText text={data?.q || "Câu hỏi..."} />
+    <div className="absolute w-[80mm] h-[69.3mm]" style={style}>
+      <svg className="absolute inset-0 w-full h-full drop-shadow-sm" viewBox="0 0 82 71.3">
+        <polygon points="21,1 61,1 81,35.65 61,70.3 21,70.3 1,35.65" fill="white" stroke="#94a3b8" strokeWidth="1.5" />
+      </svg>
+      <div className="absolute inset-0 flex items-start justify-center pt-3">
+        <div className="relative z-10 flex flex-col w-[46mm] h-[58mm] justify-start">
+          {data?.q && (
+            <div className="text-[11px] font-bold text-slate-800 mb-1.5 line-clamp-2 text-center w-full leading-tight">
+              <MathText text={data.q} />
+            </div>
+          )}
+          <div className="flex justify-center items-center mb-2">
+            <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-full">Học sinh {index}</span>
           </div>
-        </div>
-        
-        <div className="flex-1 border border-dashed border-slate-200 rounded-lg p-2 relative flex flex-col">
-          <span className="absolute top-0.5 left-1.5 text-[7px] font-black text-slate-200 uppercase">Bài làm cá nhân</span>
-          <div className="mt-2 space-y-2 flex-1">
-            <div className="h-[1px] bg-slate-100 w-full" />
-            <div className="h-[1px] bg-slate-100 w-full" />
-            <div className="h-[1px] bg-slate-100 w-full" />
-            <div className="h-[1px] bg-slate-100 w-full" />
-            <div className="h-[1px] bg-slate-100 w-full" />
+          <div className="flex-1 flex flex-col items-center justify-end text-center overflow-hidden pb-2">
+            <div className="w-full border-b border-dotted border-slate-300 mb-3"></div>
+            <div className="w-full border-b border-dotted border-slate-300 mb-3"></div>
+            <div className="w-full border-b border-dotted border-slate-300 mb-1"></div>
           </div>
-        </div>
-
-        <div className="h-[12mm] border border-slate-100 rounded-lg p-1.5 bg-amber-50/30 relative">
-          <span className="absolute top-0.5 left-1.5 text-[6px] font-black text-amber-300 uppercase">Nhận xét của nhóm</span>
-          <div className="mt-3 h-[1px] bg-amber-100 w-full" />
         </div>
       </div>
     </div>
